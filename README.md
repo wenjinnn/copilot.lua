@@ -86,6 +86,7 @@ require('copilot').setup({
     cvs = false,
     ["."] = false,
   },
+  only_buflisted = true,
   copilot_node_command = 'node', -- Node.js version must be > 18.x
   server_opts_overrides = {},
 })
@@ -110,7 +111,7 @@ require("copilot.panel").refresh()
 
 ### suggestion
 
-When `auto_trigger` is `true`, copilot starts suggesting as soon as you enter insert mode. 
+When `auto_trigger` is `true`, copilot starts suggesting as soon as you enter insert mode.
 
 When `auto_trigger` is `false`, use the `next` or `prev` keymap to trigger copilot suggestion.
 
@@ -176,6 +177,10 @@ require("copilot").setup {
   },
 }
 ```
+
+### only_buflisted
+
+If `only_buflisted` is `true` (the default value), copilot will only attach to buffers that are shows up in the buffer list.
 
 ### copilot_node_command
 

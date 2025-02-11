@@ -103,8 +103,8 @@ function M.should_attach()
     return not ft_disabled, ft_disabled_reason
   end
 
-  if not vim.bo.buflisted then
-    return false, "buffer not 'buflisted'"
+  if config.get("only_buflisted") and not vim.bo.buflisted then
+    return false, "buffer not 'buflisted' and 'only_buflisted' is true"
   end
 
   if vim.bo.buftype ~= "" then
