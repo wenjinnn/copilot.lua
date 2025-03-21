@@ -40,7 +40,11 @@ local default_config = {
   ---@type string|nil
   auth_provider_url = nil,
   copilot_node_command = "node",
+  ---@type string[]
+  workspace_folders = {},
   server_opts_overrides = {},
+  ---@type string|nil
+  copilot_model = nil,
 }
 
 local mod = {
@@ -80,6 +84,16 @@ function mod.get(key)
   end
 
   return mod.config
+end
+
+---@param key string
+---@param value any
+function mod.set(key, value)
+  if not mod.config then
+    error("[Copilot] not initialized")
+  end
+
+  mod.config[key] = value
 end
 
 return mod

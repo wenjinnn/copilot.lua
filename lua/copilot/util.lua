@@ -1,5 +1,4 @@
 local config = require("copilot.config")
-
 local unpack = unpack or table.unpack
 
 local M = {}
@@ -20,7 +19,7 @@ function M.get_editor_info()
     editorPluginInfo = {
       name = "copilot.lua",
       -- reflects version of github/copilot.vim
-      version = "1.13.0",
+      version = "1.43.0",
     },
   }
   return info
@@ -30,7 +29,7 @@ local copilot_lua_version = nil
 function M.get_copilot_lua_version()
   if not copilot_lua_version then
     local plugin_version_ok, plugin_version = pcall(function()
-      local plugin_dir = vim.fn.fnamemodify(M.get_copilot_path(), ":h:h")
+      local plugin_dir = M.get_plugin_path()
       return vim.fn.systemlist(string.format("cd %s && git rev-parse HEAD", plugin_dir))[1]
     end)
     copilot_lua_version = plugin_version_ok and plugin_version or "dev"
@@ -97,7 +96,8 @@ end
 ---@return boolean should_attach
 ---@return string? no_attach_reason
 function M.should_attach()
-  local ft_disabled, ft_disabled_reason = is_ft_disabled(vim.bo.filetype, config.get("filetypes"))
+  local ft = config.get("filetypes") --[[@as table<string, boolean>]]
+  local ft_disabled, ft_disabled_reason = is_ft_disabled(vim.bo.filetype, ft)
 
   if ft_disabled then
     return not ft_disabled, ft_disabled_reason
@@ -187,13 +187,15 @@ end
 
 ---@return copilot_editor_configuration
 function M.get_editor_configuration()
-  local conf = config.get()
+  local conf = config.get() --[[@as copilot_config]]
 
-  local filetypes = vim.deepcopy(conf.filetypes)
+  local filetypes = vim.deepcopy(conf.filetypes) --[[@as table<string, boolean>]]
 
   if filetypes["*"] == nil then
     filetypes = vim.tbl_deep_extend("keep", filetypes, internal_filetypes)
   end
+
+  local copilot_model = conf and conf.copilot_model ~= "" and conf.copilot_model or ""
 
   ---@type string[]
   local disabled_filetypes = vim.tbl_filter(function(ft)
@@ -202,6 +204,11 @@ function M.get_editor_configuration()
   table.sort(disabled_filetypes)
 
   return {
+    github = {
+      copilot = {
+        selectedCompletionModel = copilot_model,
+      },
+    },
     enableAutoCompletions = not not (conf.panel.enabled or conf.suggestion.enabled),
     disabledLanguages = vim.tbl_map(function(ft)
       return { languageId = ft }
@@ -271,11 +278,10 @@ function M.get_network_proxy()
   }
 end
 
----@deprecated
-M.get_copilot_path = function()
-  local copilot_path = vim.api.nvim_get_runtime_file("copilot/index.js", false)[1]
+M.get_plugin_path = function()
+  local copilot_path = vim.api.nvim_get_runtime_file("lua/copilot/init.lua", false)[1]
   if vim.fn.filereadable(copilot_path) ~= 0 then
-    return copilot_path
+    return vim.fn.fnamemodify(copilot_path, ":h:h:h")
   else
     print("[Copilot] could not read" .. copilot_path)
   end
@@ -289,11 +295,11 @@ end
 ---@param str string
 ---@return integer
 function M.strutf16len(str)
-  return vim.fn.strchars(vim.fn.substitute(str, [==[\\%#=2[^\u0001-\uffff]]==], "  ", "g"))
-end
-
-if vim.fn.exists("*strutf16len") == 1 then
-  M.strutf16len = vim.fn.strutf16len
+  if vim.fn.exists("*strutf16len") == 1 then
+    return vim.fn.strutf16len(str)
+  else
+    return vim.fn.strchars(vim.fn.substitute(str, [==[\\%#=2[^\u0001-\uffff]]==], "  ", "g"))
+  end
 end
 
 return M
