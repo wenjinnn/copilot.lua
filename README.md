@@ -87,9 +87,22 @@ require('copilot').setup({
     cvs = false,
     ["."] = false,
   },
+  logger = {
+    log_to_file = false,
+    file = vim.fn.stdpath("log") .. "/copilot-lua.log",
+    file_log_level = vim.log.levels.WARN,
+    print_log = true,
+    print_log_level = vim.log.levels.WARN,
+    trace_lsp = "off", -- "off" | "messages" | "verbose"
+    trace_lsp_progress = false,
+    log_lsp_messages = false,
+  },
   copilot_node_command = 'node', -- Node.js version must be > 18.x
-  copilot_model = "",  -- Current LSP default is gpt-35-turbo, supports gpt-4o-copilot
   workspace_folders = {},
+  copilot_model = "",  -- Current LSP default is gpt-35-turbo, supports gpt-4o-copilot
+  root_dir = function()
+    return vim.fs.dirname(vim.fs.find(".git", { upward = true })[1])
+  end,
   server_opts_overrides = {},
 })
 ```
@@ -115,13 +128,16 @@ require("copilot.panel").refresh()
 
 When `auto_trigger` is `true`, copilot starts suggesting as soon as you enter insert mode.
 
-When `auto_trigger` is `false`, use the `next` or `prev` keymap to trigger copilot suggestion.
+When `auto_trigger` is `false`, use the `next`, `prev` or `accept` keymap to trigger copilot suggestion.
 
 To toggle auto trigger for the current buffer, use `require("copilot.suggestion").toggle_auto_trigger()`.
 
 Copilot suggestion is automatically hidden when `popupmenu-completion` is open. In case you use a custom
 menu for completion, you can set the `copilot_suggestion_hidden` buffer variable to `true` to have the
-same behavior. For example, with `nvim-cmp`:
+same behavior.
+
+<details>
+<summary>Example using nvim-cmp</summary>
 
 ```lua
 cmp.event:on("menu_opened", function()
@@ -132,6 +148,30 @@ cmp.event:on("menu_closed", function()
   vim.b.copilot_suggestion_hidden = false
 end)
 ```
+
+</details>
+
+<details>
+<summary>Example using blink.cmp</summary>
+
+```lua
+vim.api.nvim_create_autocmd("User", {
+  pattern = "BlinkCmpMenuOpen",
+  callback = function()
+    vim.b.copilot_suggestion_hidden = true
+  end,
+})
+
+vim.api.nvim_create_autocmd("User", {
+  pattern = "BlinkCmpMenuClose",
+  callback = function()
+    vim.b.copilot_suggestion_hidden = false
+  end,
+})
+
+```
+
+</details>
 
 The `copilot.suggestion` module exposes the following functions:
 
@@ -180,6 +220,38 @@ require("copilot").setup {
 }
 ```
 
+### logger
+
+Logs will be written to the `file` for anything of `file_log_level` or higher.
+Logs will be printed to NeoVim (using `notify`) for anything of `print_log_level` or higher.
+File logging is done asynchronously to minimize performance impacts, however there is still some overhead.
+
+Log levels used are the ones defined in `vim.log`:
+
+```lua
+vim.log = {
+  levels = {
+    TRACE = 0,
+    DEBUG = 1,
+    INFO = 2,
+    WARN = 3,
+    ERROR = 4,
+    OFF = 5,
+  },
+}
+```
+
+`trace_lsp` controls logging of LSP trace messages (`$/logTrace`) can either be:
+
+- `off`
+- `messages` which will output the LSP messages
+- `verbose` which adds additonal information to the message.
+
+When `trace_lsp_progress` is true, LSP progress messages (`$/progress`) will also be logged.
+When `log_lsp_messages` is true, LSP log messages (`window/logMessage`) events will be logged.
+
+Careful turning on all logging features as the log files may get very large over time, and are not pruned by the application.
+
 ### copilot_node_command
 
 Use this field to provide the path to a specific node version such as one installed by nvm. Node.js version must be 18.x or newer.
@@ -227,6 +299,11 @@ workspace_folders = {
 ```
 
 They can also be added runtime, using the command `:Copilot workspace add [folderpath]` where `[folderpath]` is the workspace folder.
+
+### root_dir
+
+This allows changing the function that gets the root folder, the default looks for a parent folder that contains the folder `.git`.
+If none is found, it will use the current working directory.
 
 ## Commands
 

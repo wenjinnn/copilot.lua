@@ -1,6 +1,7 @@
 local api = require("copilot.api")
 local config = require("copilot.config")
 local util = require("copilot.util")
+local logger = require("copilot.logger")
 
 local is_disabled = false
 
@@ -9,6 +10,7 @@ local M = {
   id = nil,
   --- @class copilot_capabilities:lsp.ClientCapabilities
   --- @field copilot table<'openURL', boolean>
+  --- @field workspace table<'workspaceFolders', boolean>
   capabilities = nil,
   config = nil,
   node_version = nil,
@@ -21,7 +23,7 @@ local M = {
 local function store_client_id(id)
   if M.id and M.id ~= id then
     if vim.lsp.get_client_by_id(M.id) then
-      error("unexpectedly started multiple copilot servers")
+      vim.lsp.stop_client(M.id)
     end
   end
 
@@ -92,7 +94,7 @@ end
 ---@param force? boolean
 function M.buf_attach(force)
   if is_disabled then
-    print("[Copilot] Offline")
+    logger.warn("copilot is disabled")
     return
   end
 
@@ -101,20 +103,23 @@ function M.buf_attach(force)
   end
 
   if not M.config then
-    vim.notify("[Copilot] Cannot attach: configuration not initialized", vim.log.levels.ERROR)
+    logger.error("cannot attach: configuration not initialized")
     return
   end
 
+  -- In case it has changed, we update it
+  M.config.root_dir = config.get_root_dir()
+
   local ok, client_id_or_err = pcall(lsp_start, M.config)
   if not ok then
-    vim.notify(string.format("[Copilot] Failed to start LSP client: %s", client_id_or_err), vim.log.levels.ERROR)
+    logger.error(string.format("failed to start LSP client: %s", client_id_or_err))
     return
   end
 
   if client_id_or_err then
     store_client_id(client_id_or_err)
   else
-    vim.notify("[Copilot] LSP client failed to start (no client ID returned)", vim.log.levels.ERROR)
+    logger.error("LSP client failed to start (no client ID returned)")
   end
 end
 
@@ -135,7 +140,7 @@ end
 ---@param callback fun(client:table):nil
 function M.use_client(callback)
   if is_disabled then
-    print("[Copilot] Offline")
+    logger.warn("copilot is offline")
     return
   end
 
@@ -143,13 +148,14 @@ function M.use_client(callback)
 
   if not client then
     if not M.config then
-      error("copilot.setup is not called yet")
+      logger.error("copilot.setup is not called yet")
+      return
     end
 
     local client_id, err = vim.lsp.start_client(M.config)
 
     if not client_id then
-      error(string.format("[Copilot] Error starting LSP Client: %s", err))
+      logger.error(string.format("error starting LSP client: %s", err))
       return
     end
 
@@ -163,10 +169,10 @@ function M.use_client(callback)
     return
   end
 
-  local timer, err, _ = vim.loop.new_timer()
+  local timer, err, _ = vim.uv.new_timer()
 
   if not timer then
-    error(string.format("[Copilot] Error creating timer: %s", err))
+    logger.error(string.format("error creating timer: %s", err))
     return
   end
 
@@ -183,12 +189,43 @@ function M.use_client(callback)
   )
 end
 
+local function get_handlers()
+  local handlers = {
+    PanelSolution = api.handlers.PanelSolution,
+    PanelSolutionsDone = api.handlers.PanelSolutionsDone,
+    statusNotification = api.handlers.statusNotification,
+    ["copilot/openURL"] = api.handlers["copilot/openURL"],
+  }
+
+  -- optional handlers
+  local logger_conf = config.get("logger") --[[@as copilot_config_logging]]
+  if logger_conf.trace_lsp ~= "off" then
+    handlers = vim.tbl_extend("force", handlers, {
+      ["$/logTrace"] = logger.handle_lsp_trace,
+    })
+  end
+
+  if logger_conf.trace_lsp_progress then
+    handlers = vim.tbl_extend("force", handlers, {
+      ["$/progress"] = logger.handle_lsp_progress,
+    })
+  end
+
+  if logger_conf.log_lsp_messages then
+    handlers = vim.tbl_extend("force", handlers, {
+      ["window/logMessage"] = logger.handle_log_lsp_messages,
+    })
+  end
+
+  return handlers
+end
+
 local function prepare_client_config(overrides)
   local node = config.get("copilot_node_command")
 
   if vim.fn.executable(node) ~= 1 then
     local err = string.format("copilot_node_command(%s) is not executable", node)
-    vim.notify("[Copilot] " .. err, vim.log.levels.ERROR)
+    logger.error(err)
     M.startup_error = err
     return
   end
@@ -196,7 +233,7 @@ local function prepare_client_config(overrides)
   local agent_path = vim.api.nvim_get_runtime_file("copilot/dist/language-server.js", false)[1]
   if not agent_path or vim.fn.filereadable(agent_path) == 0 then
     local err = string.format("Could not find language-server.js (bad install?) : %s", tostring(agent_path))
-    vim.notify("[Copilot] " .. err, vim.log.levels.ERROR)
+    logger.error(err)
     M.startup_error = err
     return
   end
@@ -211,18 +248,7 @@ local function prepare_client_config(overrides)
     workspaceFolders = true,
   }
 
-  local handlers = {
-    PanelSolution = api.handlers.PanelSolution,
-    PanelSolutionsDone = api.handlers.PanelSolutionsDone,
-    statusNotification = api.handlers.statusNotification,
-    ["copilot/openURL"] = api.handlers["copilot/openURL"],
-  }
-
-  local root_dir = vim.loop.cwd()
-  if not root_dir then
-    root_dir = vim.fn.getcwd()
-  end
-
+  local root_dir = config.get_root_dir()
   local workspace_folders = {
     --- @type workspace_folder
     {
@@ -247,6 +273,9 @@ local function prepare_client_config(overrides)
     end
   end
 
+  local editor_info = util.get_editor_info()
+
+  -- LSP config, not to be confused with config.lua
   return vim.tbl_deep_extend("force", {
     cmd = {
       node,
@@ -272,11 +301,14 @@ local function prepare_client_config(overrides)
         set_editor_info_params.authProvider = provider_url and {
           url = provider_url,
         } or nil
+
+        logger.debug("data for setEditorInfo LSP call", set_editor_info_params)
         api.set_editor_info(client, set_editor_info_params, function(err)
           if err then
-            vim.notify(string.format("[copilot] setEditorInfo failure: %s", err), vim.log.levels.ERROR)
+            logger.error(string.format("setEditorInfo failure: %s", err))
           end
         end)
+        logger.trace("setEditorInfo has been called")
         M.initialized = true
       end)
     end,
@@ -294,11 +326,17 @@ local function prepare_client_config(overrides)
         end)
       end
     end,
-    handlers = handlers,
+    handlers = get_handlers(),
     init_options = {
       copilotIntegrationId = "vscode-chat",
+      -- Fix LSP warning: editorInfo and editorPluginInfo will soon be required in initializationOptions
+      -- We are sending these twice for the time being as it will become required here and we get a warning if not set.
+      -- However if not passed in setEditorInfo, that one returns an error.
+      editorInfo = editor_info.editorInfo,
+      editorPluginInfo = editor_info.editorPluginInfo,
     },
     workspace_folders = workspace_folders,
+    trace = config.get("trace") or "off",
   }, overrides)
 end
 
@@ -339,12 +377,12 @@ end
 
 function M.add_workspace_folder(folder_path)
   if type(folder_path) ~= "string" then
-    vim.notify("[Copilot] Workspace folder path must be a string", vim.log.levels.ERROR)
+    logger.error("workspace folder path must be a string")
     return false
   end
 
   if vim.fn.isdirectory(folder_path) ~= 1 then
-    vim.notify("[Copilot] Invalid workspace folder: " .. folder_path, vim.log.levels.ERROR)
+    logger.error("invalid workspace folder: " .. folder_path)
     return false
   end
 
@@ -379,9 +417,9 @@ function M.add_workspace_folder(folder_path)
         removed = {},
       },
     })
-    vim.notify("[Copilot] Added workspace folder: " .. folder_path, vim.log.levels.INFO)
+    logger.notify("added workspace folder: " .. folder_path)
   else
-    vim.notify("[Copilot] Workspace folder added for next session: " .. folder_path, vim.log.levels.INFO)
+    logger.notify("workspace folder will be added on next session: " .. folder_path)
   end
 
   return true
