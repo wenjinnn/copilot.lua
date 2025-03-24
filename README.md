@@ -22,7 +22,22 @@ use { "zbirenbaum/copilot.lua" }
 
 ### Authentication
 
+You can authenticate using one of the following methods:
+
+#### Permanent sign-in (Recommended)
+
 Once copilot is running, run `:Copilot auth` to start the authentication process.
+
+#### Token
+
+Get a token from the github cli using:
+
+```sh
+gh auth token
+```
+
+Set either the environment variable `GITHUB_COPILOT_TOKEN` or `GH_COPILOT_TOKEN` to that token.
+Note that if you have the variable set, even empty, the LSP will attempt to use it to log in.
 
 ## Setup and Configuration
 
@@ -88,10 +103,8 @@ require('copilot').setup({
     ["."] = false,
   },
   logger = {
-    log_to_file = false,
     file = vim.fn.stdpath("log") .. "/copilot-lua.log",
-    file_log_level = vim.log.levels.WARN,
-    print_log = true,
+    file_log_level = vim.log.levels.OFF,
     print_log_level = vim.log.levels.WARN,
     trace_lsp = "off", -- "off" | "messages" | "verbose"
     trace_lsp_progress = false,
@@ -103,6 +116,7 @@ require('copilot').setup({
   root_dir = function()
     return vim.fs.dirname(vim.fs.find(".git", { upward = true })[1])
   end,
+  should_attach = nil, -- type is fun(bufnr: integer, bufname: string): boolean
   server_opts_overrides = {},
 })
 ```
@@ -121,13 +135,13 @@ require("copilot.panel").accept()
 require("copilot.panel").jump_next()
 require("copilot.panel").jump_prev()
 require("copilot.panel").open({position, ratio})
+require("copilot.panel").toggle()
 require("copilot.panel").refresh()
 ```
 
 ### suggestion
 
 When `auto_trigger` is `true`, copilot starts suggesting as soon as you enter insert mode.
-
 When `auto_trigger` is `false`, use the `next`, `prev` or `accept` keymap to trigger copilot suggestion.
 
 To toggle auto trigger for the current buffer, use `require("copilot.suggestion").toggle_auto_trigger()`.
@@ -224,6 +238,7 @@ require("copilot").setup {
 
 Logs will be written to the `file` for anything of `file_log_level` or higher.
 Logs will be printed to NeoVim (using `notify`) for anything of `print_log_level` or higher.
+To turn either off, simply set its level to `vim.log.levels.OFF`.
 File logging is done asynchronously to minimize performance impacts, however there is still some overhead.
 
 Log levels used are the ones defined in `vim.log`:
@@ -304,6 +319,26 @@ They can also be added runtime, using the command `:Copilot workspace add [folde
 
 This allows changing the function that gets the root folder, the default looks for a parent folder that contains the folder `.git`.
 If none is found, it will use the current working directory.
+
+### should_attach
+
+This function is called to determine if copilot should attach to the buffer or not.
+It is useful if you would like to go beyond the filetypes and have more control over when copilot should attach.
+Since this happens before attaching to the buffer, it is good to prevent Copilot from reading sensitive files.
+
+An example of this would be:
+
+```lua
+require("copilot").setup {
+  should_attach = function(_, bufname)
+    if string.match(bufname, "env") then
+      return false
+    end
+
+    return true
+  end
+}
+```
 
 ## Commands
 

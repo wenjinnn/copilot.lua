@@ -17,6 +17,8 @@ local M = {
   node_version_error = nil,
   startup_error = nil,
   initialized = false,
+  ---@type copilot_should_attach|nil
+  should_attach = nil,
 }
 
 ---@param id integer
@@ -93,6 +95,16 @@ end
 
 ---@param force? boolean
 function M.buf_attach(force)
+  if M.should_attach then
+    local bufnr = vim.api.nvim_get_current_buf()
+    local bufname = vim.api.nvim_buf_get_name(bufnr)
+
+    if not M.should_attach(bufnr, bufname) then
+      logger.debug("copilot is disabled by should_attach")
+      return
+    end
+  end
+
   if is_disabled then
     logger.warn("copilot is disabled")
     return
@@ -309,6 +321,12 @@ local function prepare_client_config(overrides)
           end
         end)
         logger.trace("setEditorInfo has been called")
+
+        local logger_conf = config.get("logger") --[[@as copilot_config_logging]]
+        local trace_params = { value = logger_conf.trace_lsp } --[[@as copilot_nofify_set_trace_params]]
+        logger.trace("data for setTrace LSP call", trace_params)
+        api.notify_set_trace(client, trace_params)
+
         M.initialized = true
       end)
     end,
@@ -342,6 +360,7 @@ end
 
 function M.setup()
   M.config = prepare_client_config(config.get("server_opts_overrides"))
+  M.should_attach = config.get("should_attach") --[[@as copilot_should_attach|nil]]
 
   if not M.config then
     is_disabled = true
